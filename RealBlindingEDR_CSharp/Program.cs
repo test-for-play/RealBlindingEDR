@@ -19,7 +19,7 @@ namespace RealBlindingEDR
 
         // Handle for the driver
         private static IntPtr hDevice = IntPtr.Zero;
-        private static IntPtr Process = IntPtr.Zero;
+        private static IntPtr ProcessHandle = IntPtr.Zero;
         private static uint dwMajor = 0;
         private static uint dwMinorVersion = 0;
         private static uint dwBuild = 0;
@@ -289,7 +289,7 @@ namespace RealBlindingEDR
                     }
 
                     param = (GetHandle)Marshal.PtrToStructure(paramPtr, typeof(GetHandle));
-                    Process = param.handle;
+                    ProcessHandle = param.handle;
 
                     Marshal.FreeHGlobal(paramPtr);
                     Marshal.FreeHGlobal(buf);
@@ -385,7 +385,7 @@ namespace RealBlindingEDR
                     {
                         fromAddress = fromAddress,
                         length = len,
-                        targetProcess = Process,
+                        targetProcess = ProcessHandle,
                         toAddress = toAddress,
                         padding = IntPtr.Zero,
                         returnCode = 0
